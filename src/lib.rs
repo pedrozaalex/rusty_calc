@@ -4,6 +4,9 @@ use anyhow::{anyhow, Result};
 
 use token::{Token, TokenStream};
 
+use rustyline::error::ReadlineError;
+use rustyline::{DefaultEditor};
+
 mod token;
 
 fn expression(ts: &mut TokenStream, variables: &mut VarTable) -> Result<f64> {
@@ -78,18 +81,26 @@ fn statement(ts: &mut TokenStream, variables: &mut VarTable) -> Result<f64> {
         Some(Token::Let) => {
             ts.next().expect("Should be a let token");
 
-            let label = if let Some(Token::Name(name)) = ts.next()? {
-                name
-            } else {
-                anyhow::bail!("A name is expected after let")
-            };
+            let next_token = ts.next()?;
+
+            if next_token.is_none() {
+                anyhow::bail!("Expected a name token after let keyword but none was found")
+            }
+
+            let next_token = next_token.unwrap();
+
+            let label =
+                match next_token {
+                    Token::Name(ref name) => name,
+                    _ => anyhow::bail!("Expected a name after let keyword but got {:?}", next_token)
+                };
 
             if variables.contains(&label) {
-                anyhow::bail!("Variable {} is already defined", label)
+                anyhow::bail!("Variable {} is already defined. Use = to change it's value. Example: 'x = 5'", label)
             }
 
             if ts.next()?.is_some_and(|token| token != Token::Symbol('=')) {
-                anyhow::bail!("Expected an = token after let {}", label)
+                anyhow::bail!("Expected an = token after 'let {label}' but got {:?}", next_token)
             }
 
             let value = expression(ts, variables)?;
@@ -134,15 +145,16 @@ fn evaluate(expression: &str, variables: &mut VarTable) -> Vec<EvaluationResult>
     let mut res = vec![];
 
     loop {
-        let token = ts.peek()
-            .unwrap_or_else(|e| {
-                res.push(EvaluationResult::Error(format!("Error while reading input: {}", e)));
-                ts.discard_invalid();
-                Some(Token::Noop)
-            });
+        let token =
+            ts.peek()
+                .map_err(|e| {
+                    res.push(EvaluationResult::Error(format!("Error occurred while peeking next token: {}", e)));
+                    ts.discard_invalid();
+                })
+                .ok()
+                .flatten();
 
         match token {
-            Some(Token::Noop) => {}
             Some(Token::EndStatement) => {
                 ts.next().expect("Should have an end statement token in the stream");
                 if let Some(val) = val { res.push(EvaluationResult::Number(val)); }
@@ -156,7 +168,7 @@ fn evaluate(expression: &str, variables: &mut VarTable) -> Vec<EvaluationResult>
                 statement(&mut ts, variables)
                     .map(|result| res.push(EvaluationResult::Number(result)))
                     .unwrap_or_else(|e| {
-                        res.push(EvaluationResult::Error(format!("Error occurred while evaluating token of type {}: {}", token, e)));
+                        res.push(EvaluationResult::Error(format!("Error occurred while evaluating '{}': {}", token, e)));
                         ts.discard_invalid();
                     });
             }
@@ -206,20 +218,24 @@ impl VarTable {
     }
 }
 
-fn prompt() -> String {
-    inquire::Text::new("")
-        .prompt()
-        .expect("Failed to read input")
-}
-
 pub fn calculate() {
-    let mut input = String::new();
+    let mut input: String;
     let mut should_quit = false;
     let mut variables: VarTable = VarTable(vec![]);
 
+    let mut prompter = DefaultEditor::new()
+        .unwrap_or_else(|e| panic!("Failed to create prompter: {}", e));
+
     loop {
-        input.clear();
-        input.push_str(prompt().trim());
+        input = match prompter.readline("> ") {
+            Ok(line) => line,
+            Err(ReadlineError::Interrupted) => continue,
+            Err(ReadlineError::Eof) => break,
+            Err(err) => {
+                println!("Error: {:?}", err);
+                break;
+            }
+        };
 
         for result in evaluate(input.as_str(), &mut variables) {
             match result {
@@ -278,12 +294,11 @@ mod tests {
     fn test_evaluate_with_undefined_variable() {
         let mut variables = VarTable(vec![]);
         let result = evaluate("x + 3", &mut variables);
-        for r in result.iter() {
-            assert!(
-                matches!(r, EvaluationResult::Error(_)),
-                "Result should be an error for expression 'x + 3' when x is undefined, but was {:?}", r
-            )
-        }
+        assert_eq!(result.len(), 1, "Result should contain only one element");
+        assert!(
+            matches!(result[0], EvaluationResult::Error(_)),
+            "Result should be an error for expression 'x + 3'"
+        )
     }
 
     #[test]

@@ -3,6 +3,10 @@ use std::fmt::Display;
 use anyhow::Result;
 use thiserror::Error;
 
+const DECLARE: &str = "let";
+const END_STATEMENT: char = ';';
+const QUIT: char = 'q';
+
 static SYMBOLS: [char; 10] = [
     /* --- Operators --- */
     '+', '-', '*', '/', '!',
@@ -10,8 +14,8 @@ static SYMBOLS: [char; 10] = [
     '(', ')',
     /* --- Commands --- */
     '=', // Assign
-    ';', // Print
-    'q' // Quit
+    END_STATEMENT, // End statement
+    QUIT, // Quit
 ];
 
 #[derive(Debug, PartialEq, Clone)]
@@ -22,19 +26,17 @@ pub enum Token {
     Name(String),
     EndStatement,
     Quit,
-    Noop,
 }
 
 impl Display for Token {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Token::Number(n) => write!(f, "Number({})", n),
-            Token::Symbol(s) => write!(f, "Symbol({})", s),
-            Token::Let => write!(f, "Let"),
-            Token::Name(n) => write!(f, "Name({})", n),
-            Token::EndStatement => write!(f, "EndStatement"),
-            Token::Quit => write!(f, "Quit"),
-            Token::Noop => write!(f, "Noop"),
+            Token::Number(number) => write!(f, "{}", number),
+            Token::Symbol(symbol) => write!(f, "{}", symbol),
+            Token::Let => write!(f, "{}", DECLARE),
+            Token::Name(name) => write!(f, "{}", name),
+            Token::EndStatement => write!(f, "{}", END_STATEMENT),
+            Token::Quit => write!(f, "{}", QUIT),
         }
     }
 }
@@ -46,8 +48,6 @@ pub enum TokenizationError {
     #[error("Invalid number: {0}")]
     InvalidNumber(String),
 }
-
-type MaybeToken = Option<Token>;
 
 pub struct TokenStream {
     buffer: Vec<char>,
@@ -64,7 +64,7 @@ impl TokenStream {
         }
     }
 
-    pub fn next(&mut self) -> Result<MaybeToken> {
+    pub fn next(&mut self) -> Result<Option<Token>> {
         if let Some(token) = self.put_back.pop() {
             return Ok(Some(token));
         }
@@ -85,15 +85,15 @@ impl TokenStream {
             Ok(Some(Token::Number(number)))
         } else if is_valid_symbol(c) {
             match c {
-                ';' => if self.pos < self.buffer.len() - 1 { Ok(Some(Token::EndStatement)) } else { Ok(None) },
-                'q' => Ok(Some(Token::Quit)),
+                END_STATEMENT => if self.pos < self.buffer.len() - 1 { Ok(Some(Token::EndStatement)) } else { Ok(None) },
+                QUIT => Ok(Some(Token::Quit)),
                 _ => Ok(Some(Token::Symbol(c)))
             }
         } else if c.is_alphabetic() {
             self.pos -= 1;
             let string = self.read_string();
 
-            if string == "let" {
+            if string == DECLARE {
                 return Ok(Some(Token::Let));
             }
 
@@ -103,7 +103,7 @@ impl TokenStream {
         }
     }
 
-    pub fn peek(&mut self) -> Result<MaybeToken> {
+    pub fn peek(&mut self) -> Result<Option<Token>> {
         let token = self.next()?;
         if let Some(ref token) = token {
             self.put_back(token.clone());
@@ -117,12 +117,10 @@ impl TokenStream {
 
     // The current expression is deemed invalid, discard everything until the next semicolon, or the end of the input
     pub fn discard_invalid(&mut self) {
-        while self.pos <= self.buffer.len() {
-            if self.pos == self.buffer.len() || self.buffer[self.pos] == ';' {
+        while let Some(token) = self.next().unwrap_or(None) {
+            if token == Token::EndStatement {
                 break;
             }
-
-            self.pos += 1;
         }
     }
 
@@ -160,7 +158,7 @@ impl TokenStream {
 }
 
 impl Iterator for TokenStream {
-    type Item = Result<MaybeToken>;
+    type Item = Result<Option<Token>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         Some(self.next())
