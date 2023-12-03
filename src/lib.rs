@@ -87,20 +87,24 @@ fn statement(ts: &mut TokenStream, variables: &mut VarTable) -> Result<f64> {
                 anyhow::bail!("Expected a name token after let keyword but none was found")
             }
 
+            // We can safely unwrap here because we checked that next_token is not None
             let next_token = next_token.unwrap();
 
             let label =
                 match next_token {
                     Token::Name(ref name) => name,
-                    _ => anyhow::bail!("Expected a name after let keyword but got {:?}", next_token)
+                    _ => anyhow::bail!("Expected a name after let keyword but got '{}'", next_token)
                 };
 
             if variables.contains(&label) {
                 anyhow::bail!("Variable {} is already defined. Use = to change it's value. Example: 'x = 5'", label)
             }
 
-            if ts.next()?.is_some_and(|token| token != Token::Symbol('=')) {
-                anyhow::bail!("Expected an = token after 'let {label}' but got {:?}", next_token)
+            let next_token = ts.next()?;
+
+            if next_token.as_ref().is_some_and(|token| *token != Token::Symbol('=')) {
+                // We can safely unwrap here because we checked that next_token is not None
+                anyhow::bail!("Expected an '=' symbol after 'let {label}' but got '{}'", next_token.unwrap())
             }
 
             let value = expression(ts, variables)?;
@@ -232,7 +236,7 @@ pub fn calculate() {
             Err(ReadlineError::Interrupted) => continue,
             Err(ReadlineError::Eof) => break,
             Err(err) => {
-                println!("Error: {:?}", err);
+                println!("Error occurred while reading input: {}", err);
                 break;
             }
         };
@@ -240,7 +244,7 @@ pub fn calculate() {
         for result in evaluate(input.as_str(), &mut variables) {
             match result {
                 EvaluationResult::Number(n) => println!("={}", n),
-                EvaluationResult::Error(e) => println!("Error: {}", e),
+                EvaluationResult::Error(e) => eprintln!("{}", e),
                 EvaluationResult::Quit => should_quit = true
             }
         }
